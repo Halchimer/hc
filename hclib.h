@@ -14,6 +14,7 @@
  *  H_RANDOM
  *  H_STRING
  *  H_ITER
+ *  H_BITSET
  *
  *  Parameters :
  *
@@ -40,11 +41,16 @@ extern "C" {
 #define H_RANDOM
 #define H_STRING
 #define H_ITER
+#define H_BITSET
 #endif
 
 //
 // Dependencies
 //
+
+#ifdef H_BITSET
+#define H_TYPES
+#endif
 
 #ifdef H_RANDOM
 #define H_TYPES
@@ -250,6 +256,35 @@ size_t : h_arena_string_alloc_size\
 
 #endif
 
+#ifdef H_BITSET
+
+    #define h_fixed_bitset_t(S) _BitInt(S)
+
+    // Dynamic Bitset
+
+    typedef u64_t h_bitset_word_t;
+
+    typedef struct h_bitset_t {
+        size_t size;
+        h_bitset_word_t *words;
+    } h_bitset_t;
+
+    h_bitset_t h_create_bitset();
+
+    void h_bitset_set(h_bitset_t *bitset, size_t idx);
+    bool h_bitset_get(h_bitset_t *bitset, size_t idx);
+    void h_bitset_clear_all(h_bitset_t *bitset);
+    void h_bitset_clear(h_bitset_t *bitset, size_t idx);
+    void h_bitset_flip(h_bitset_t *bitset, size_t idx);
+    void h_bitset_free(h_bitset_t *bitset);
+
+    bool h_bitset_any(h_bitset_t *bitset);
+    void h_bitset_or(h_bitset_t *bitset, h_bitset_t *other);
+    void h_bitset_and(h_bitset_t *bitset, h_bitset_t *other);
+    void h_bitset_xor(h_bitset_t *bitset, h_bitset_t *other);
+
+#endif
+
 #ifdef H_ITER
     struct h_iter_t;
     typedef void* (h_iter_next_fn_t)(struct h_iter_t*);
@@ -271,6 +306,12 @@ size_t : h_arena_string_alloc_size\
     void *h_queue_next(h_iter_t *iter);
     bool h_queue_hasnext(h_iter_t *iter);
 
+#endif
+
+#ifdef H_BITSET
+    h_iter_t h_bitset_iter(h_bitset_t *bitset);
+    void *h_bitset_next(h_iter_t *iter);
+    bool h_bitset_hasnext(h_iter_t *iter);
 #endif
 
 #define H_FOREACH(type, name, iter) \
@@ -637,6 +678,144 @@ for(type *name = (type*)iter.next(&(iter)),**_once=&name; _once; _once=NULL)
     }
 
 #endif
+
+#ifdef H_BITSET
+    h_iter_t h_bitset_iter(h_bitset_t *bitset) {
+        return (h_iter_t){bitset, bitset->words, &h_bitset_next, &h_bitset_hasnext};
+    }
+    void *h_bitset_next(h_iter_t *iter) {
+        void *val = iter->state;
+        if (iter->hasnext(iter))
+            iter->state+=sizeof(u64_t);
+        return val;
+    }
+    bool h_bitset_hasnext(h_iter_t *iter) {
+        h_bitset_t *bitset = (h_bitset_t*)iter->collection;
+        return iter->state < bitset->words+bitset->size*sizeof(u64_t);
+    }
+#endif
+
+#endif
+
+#ifdef H_BITSET
+    h_bitset_t h_create_bitset() {
+        h_bitset_word_t *words = calloc(1, sizeof(h_bitset_word_t));
+        return (h_bitset_t){1, words};
+    }
+
+    void h_bitset_set(h_bitset_t *bitset, size_t idx) {
+        if (bitset->size == 0 || bitset->words == NULL)
+            return;
+
+        h_bitset_word_t word_idx = idx / (sizeof(h_bitset_word_t) * 8);
+        h_bitset_word_t bit_idx = idx % (sizeof(h_bitset_word_t) * 8);
+
+        if (word_idx >= bitset->size) {
+            bitset->size*=2;
+            bitset->words = realloc(bitset->words, bitset->size * sizeof(h_bitset_word_t));
+        }
+
+        bitset->words[word_idx] |= (1ULL << bit_idx);
+    }
+    bool h_bitset_get(h_bitset_t *bitset, size_t idx) {
+        if (bitset->size == 0 || bitset->words == NULL)
+            return false;
+
+        if (idx >= bitset->size * (sizeof(h_bitset_word_t) * 8)) return false;
+
+        h_bitset_word_t word_idx = idx / (sizeof(h_bitset_word_t) * 8);
+        h_bitset_word_t bit_idx = idx % (sizeof(h_bitset_word_t) * 8);
+
+        return (bitset->words[word_idx] & (1ULL << bit_idx));
+    }
+    void h_bitset_clear_all(h_bitset_t *bitset) {
+        if (bitset->size == 0 || bitset->words == NULL)
+            return;
+        memset(bitset->words, 0, bitset->size * sizeof(h_bitset_word_t));
+    }
+    void h_bitset_clear(h_bitset_t *bitset, size_t idx) {
+        if (bitset->size == 0 || bitset->words == NULL)
+            return;
+
+        h_bitset_word_t word_idx = idx / (sizeof(h_bitset_word_t) * 8);
+        h_bitset_word_t bit_idx = idx % (sizeof(h_bitset_word_t) * 8);
+
+        if (word_idx >= bitset->size) {
+            bitset->size*=2;
+            bitset->words = realloc(bitset->words, bitset->size * sizeof(h_bitset_word_t));
+        }
+
+        bitset->words[word_idx] &= ~(1ULL << bit_idx);
+    }
+    void h_bitset_flip(h_bitset_t *bitset, size_t idx) {
+        if (bitset->size == 0 || bitset->words == NULL)
+            return;
+
+        h_bitset_word_t word_idx = idx / (sizeof(h_bitset_word_t) * 8);
+        h_bitset_word_t bit_idx = idx % (sizeof(h_bitset_word_t) * 8);
+
+        if (word_idx >= bitset->size) {
+            bitset->size*=2;
+            bitset->words = realloc(bitset->words, bitset->size * sizeof(h_bitset_word_t));
+        }
+
+        bitset->words[word_idx] ^= (1ULL << bit_idx);
+    }
+    void h_bitset_free(h_bitset_t *bitset) {
+        free(bitset->words);
+        bitset->words = NULL;
+        bitset->size = 0;
+    }
+
+    bool h_bitset_any(h_bitset_t *bitset) {
+        if (bitset->size == 0 || bitset->words == NULL)
+            return false;
+
+        for (int w=0;w<bitset->size;++w) {
+            if (bitset->words[w] != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+    void h_bitset_or(h_bitset_t *bitset, h_bitset_t *other) {
+        if (bitset->size == 0 || bitset->words == NULL) return;
+        if (other->size == 0 || other->words == NULL) return;
+
+        for (int w=0;w<bitset->size;++w) {
+            if (w >= other->size) {
+                bitset->words[w] |= 0ULL;
+                continue;
+            }
+            bitset->words[w] |= other->words[w];
+        }
+
+    }
+    void h_bitset_and(h_bitset_t *bitset, h_bitset_t *other) {
+        if (bitset->size == 0 || bitset->words == NULL) return;
+        if (other->size == 0 || other->words == NULL) return;
+
+        for (int w=0;w<bitset->size;++w) {
+            if (w >= other->size) {
+                bitset->words[w] &= 0ULL;
+                continue;
+            }
+            bitset->words[w] &= other->words[w];
+        }
+    }
+    void h_bitset_xor(h_bitset_t *bitset, h_bitset_t *other) {
+        if (bitset->size == 0 || bitset->words == NULL) return;
+        if (other->size == 0 || other->words == NULL) return;
+
+        for (int w=0;w<bitset->size;++w) {
+            if (w >= other->size) {
+                bitset->words[w] ^= 0ULL;
+                continue;
+            }
+            bitset->words[w] ^= other->words[w];
+        }
+    }
+
 #endif
 
 #ifdef H_DEBUG
