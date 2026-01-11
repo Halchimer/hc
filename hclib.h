@@ -80,7 +80,7 @@ extern "C" {
 
 #ifdef H_ALLOCATORS
 
-typedef struct h_arena_t {
+typedef struct h_linear_allocator_t {
     size_t cap;
     size_t size;
     void* data;
@@ -88,13 +88,24 @@ typedef struct h_arena_t {
 #ifdef H_DEBUG
     char const* debug_name;
 #endif
+} h_linear_allocator_t;
+
+h_linear_allocator_t *h_linear_allocator_create(size_t cap, char const* debug_name);
+void h_linear_allocator_destroy(h_linear_allocator_t const *allocator);
+void *h_linear_alloc(h_linear_allocator_t *allocator, size_t size);
+
+typedef struct h_arena_t {
+    void **blocks;
+    void **current;
+    void *end;
+
+#ifdef H_DEBUG
+    char const* debug_name;
+#endif
 } h_arena_t;
 
-h_arena_t *h_arena_create(
-    size_t cap
-    , char const* debug_name
-    );
-void h_arena_destroy(h_arena_t const *arena);
+h_arena_t *h_arena_create(char const* debug_name);
+void h_arena_destroy(h_arena_t *arena);
 void *h_arena_alloc(h_arena_t *arena, size_t size);
 
 #endif
@@ -208,7 +219,7 @@ void h_queue_free(h_queue_t *queue);
     typedef struct h_hashset_t {
         size_t capacity;
 
-        h_arena_t *arena;
+        h_linear_allocator_t *arena;
         void *buckets;
         h_array_t overflow;
 
@@ -243,8 +254,8 @@ void h_queue_free(h_queue_t *queue);
     bool h_string_eq_ptr(void* a, void* b);
 
 #ifdef H_ALLOCATORS
-    h_string_t h_arena_string_alloc_cstr(h_arena_t *arena, char *cstr);
-    h_string_t h_arena_string_alloc_size(h_arena_t *arena, size_t size);
+    h_string_t h_arena_string_alloc_cstr(h_linear_allocator_t *arena, char *cstr);
+    h_string_t h_arena_string_alloc_size(h_linear_allocator_t *arena, size_t size);
 #define h_arena_string_alloc(arena, p) _Generic( p,\
 char* : h_arena_string_alloc_cstr,\
 size_t : h_arena_string_alloc_size\
@@ -329,67 +340,128 @@ for(type *name = (type*)iter.next(&(iter)),**_once=&name; _once; _once=NULL)
 #ifdef H_ALLOCATORS
 
 #ifdef H_DEBUG
-    static h_array_t _debug_arena_registry;
+    static h_array_t _debug_linear_allocator_registry;
+    static h_array_t _debug_arena_allocator_registry;
     __attribute__((constructor))
-    void h_debug_init_arena_registry() {
-        _debug_arena_registry = H_CREATE_ARRAY(h_arena_t*, 32);
+    void h_debug_init_allocator_registries() {
+        _debug_linear_allocator_registry = H_CREATE_ARRAY(h_linear_allocator_t*, 32);
+        _debug_arena_allocator_registry = H_CREATE_ARRAY(h_arena_t*, 32);
     }
 #endif
 
-    h_arena_t *h_arena_create(size_t cap
+    h_linear_allocator_t *h_linear_allocator_create(size_t cap
     , char const* debug_name
     ) {
         void *data = malloc(cap);
 
-        if (!debug_name) debug_name = "Arena";
+        if (!debug_name) debug_name = "Linear Allocator";
 
 #ifdef H_DEBUG
-        printf("Created arena '%s' with %zu bytes of capacity\n", debug_name , cap);
+        printf("Created linear allocator '%s' with %zu bytes of capacity\n", debug_name , cap);
 #endif
 
-        h_arena_t *arena = calloc(1, sizeof(h_arena_t));
-        *arena = (h_arena_t){cap, 0, data
+        h_linear_allocator_t *alloc = calloc(1, sizeof(h_linear_allocator_t));
+        *alloc = (h_linear_allocator_t){cap, 0, data
         #ifdef H_DEBUG
         , debug_name
         #endif
         };
 
 #ifdef H_DEBUG
-        H_ARRAY_PUSH(h_arena_t*, _debug_arena_registry, arena);
+        H_ARRAY_PUSH(h_linear_allocator_t*, _debug_linear_allocator_registry, alloc);
 #endif
 
-        return arena;
+        return alloc;
     }
-    void h_arena_destroy(h_arena_t const *arena) {
+    void h_linear_allocator_destroy(h_linear_allocator_t const *allocator) {
 #ifdef H_DEBUG
-        printf("Freeing arena '%s' with %zu bytes allocated\n", arena->debug_name ,arena->cap);
+        printf("Freeing linear allocator '%s' with %zu bytes allocated\n", allocator->debug_name ,allocator->cap);
 
-        for (int i=0;i<_debug_arena_registry.size;++i) {
-            if (H_ARRAY_GET(h_arena_t*, _debug_arena_registry, i) == arena)
-                h_array_remove(&_debug_arena_registry, i);
+        for (int i=0;i<_debug_linear_allocator_registry.size;++i) {
+            if (H_ARRAY_GET(h_linear_allocator_t*, _debug_linear_allocator_registry, i) == allocator)
+                h_array_remove(&_debug_linear_allocator_registry, i);
         }
 #endif
-        free(arena->data);
-        free(arena);
+        free(allocator->data);
+        free(allocator);
     }
-    void *h_arena_alloc(h_arena_t *arena, size_t size) {
-        if (arena->size + size > arena->cap) {
+    void *h_linear_alloc(h_linear_allocator_t *allocator, size_t size) {
+        if (allocator->size + size > allocator->cap) {
 #ifdef H_DEBUG
-            fprintf(stderr,"Capacity of arena '%s' exceeded.", arena->debug_name);
+            fprintf(stderr,"Capacity of linear allocator '%s' exceeded.", allocator->debug_name);
 #endif
             return NULL;
         }
 
-        void *ptr = (char*)arena->data + arena->size;
-        arena->size += size;
+        void *ptr = (char*)allocator->data + allocator->size;
+        allocator->size += size;
 
 #ifdef H_DEBUG
-        printf("Allocating %zu bytes in arena '%s' with a capacity of %zu bytes : %zu/%zu allocated\n", size, arena->debug_name, arena->cap, arena->size, arena->cap);
+        printf("Allocating %zu bytes in linear allocator '%s' with a capacity of %zu bytes : %zu/%zu allocated\n", size, allocator->debug_name, allocator->cap, allocator->size, allocator->cap);
 #endif
 
         return ptr;
     }
 
+// Arena Allocator
+
+#define H_ARENA_ALLOCATOR_BLOCK_SIZE 1024
+    h_arena_t *h_arena_create(char const* debug_name) {
+        h_arena_t *arena = calloc(1, sizeof(h_arena_t));
+
+        void **blocks = calloc(1, sizeof(void*));
+        void *end = blocks[0] = malloc(H_ARENA_ALLOCATOR_BLOCK_SIZE);
+
+        arena->blocks = blocks;
+        arena->current = blocks;
+        arena->end = end;
+
+#ifdef H_DEBUG
+        arena->debug_name = debug_name;
+        H_ARRAY_PUSH(h_arena_t*, _debug_arena_allocator_registry, arena);
+        printf("Created arena allocator '%s' with 1 block of %d bytes\n", debug_name , H_ARENA_ALLOCATOR_BLOCK_SIZE);
+#endif
+
+        return arena;
+    }
+    void h_arena_destroy(h_arena_t *arena) {
+        size_t n_blocks = arena->current - arena->blocks;
+        for (size_t i=0;i<n_blocks;++i) free(arena->blocks[i]);
+        free(arena->blocks);
+        arena->blocks = NULL;
+        arena->current = NULL;
+        arena->end = NULL;
+#ifdef H_DEBUG
+        printf("Freeing arena '%s' with %zu bytes allocated\n", arena->debug_name ,n_blocks*H_ARENA_ALLOCATOR_BLOCK_SIZE);
+        for (int i=0;i<_debug_arena_allocator_registry.size;++i) {
+            if (H_ARRAY_GET(h_arena_t*, _debug_arena_allocator_registry, i) == arena)
+                h_array_remove(&_debug_arena_allocator_registry, i);
+        }
+#endif
+    }
+    void *h_arena_alloc(h_arena_t *arena, size_t size) {
+
+        if ((char*)arena->end + size > *arena->current + H_ARENA_ALLOCATOR_BLOCK_SIZE) {
+            arena->blocks = realloc(arena->blocks, (arena->current - arena->blocks + 1) * sizeof(void*));
+            arena->current = &arena->blocks[arena->current - arena->blocks];
+            *arena->current = malloc(H_ARENA_ALLOCATOR_BLOCK_SIZE);
+            arena->end = *arena->current;
+
+#ifdef H_DEBUG
+            printf("Allocated new %d bytes block for arena '%s'\n", H_ARENA_ALLOCATOR_BLOCK_SIZE, arena->debug_name);
+#endif
+
+        }
+
+        void *ptr = (char*)arena->end;
+        arena->end += size;
+
+#ifdef H_DEBUG
+        printf("Allocated %zu bytes in arena '%s' : %zu/%d allocated (current block)\n", size, arena->debug_name, arena->end - *arena->current, H_ARENA_ALLOCATOR_BLOCK_SIZE);
+#endif
+
+        return ptr;
+    }
 #endif
 
 #ifdef H_COLLECTIONS
@@ -523,7 +595,7 @@ for(type *name = (type*)iter.next(&(iter)),**_once=&name; _once; _once=NULL)
 
     h_hashmap_t h_create_hashmap(h_kvpairdef_t kvpairdef, size_t capacity, h_hash_fn_t *hash_fn, h_kcompare_fn_t *kcompare_fn) {
         h_hashmap_t hashmap = {.keytype = kvpairdef};
-        hashmap.arena = h_arena_create(capacity * (kvpairdef.keysize + kvpairdef.valuesize) * H_HASHMAP_SLATE_FACTOR, "HashmapAllocator");
+        hashmap.arena = h_arena_create("HashmapAllocator");
         hashmap.buckets = calloc(capacity, sizeof(h_kvpair_t));
         hashmap.overflow = H_CREATE_ARRAY(h_kvpair_t, 128);
         hashmap.hash_fn = hash_fn;
@@ -630,15 +702,15 @@ for(type *name = (type*)iter.next(&(iter)),**_once=&name; _once; _once=NULL)
     }
 
 #ifdef H_ALLOCATORS
-    h_string_t h_arena_string_alloc_cstr(h_arena_t *arena, char *cstr) {
+    h_string_t h_arena_string_alloc_cstr(h_linear_allocator_t *arena, char *cstr) {
         size_t size = strlen(cstr) + 1;
-        h_cstr_t cstr_ptr = h_arena_alloc(arena, size);
+        h_cstr_t cstr_ptr = h_linear_alloc(arena, size);
         memcpy(cstr_ptr, cstr, size);
         return (h_string_t){cstr_ptr, size};
 
     }
-    h_string_t h_arena_string_alloc_size(h_arena_t *arena, size_t size) {
-        h_cstr_t cstr_ptr = h_arena_alloc(arena, size);
+    h_string_t h_arena_string_alloc_size(h_linear_allocator_t *arena, size_t size) {
+        h_cstr_t cstr_ptr = h_linear_alloc(arena, size);
         return (h_string_t){cstr_ptr, size};
     }
 
@@ -822,10 +894,16 @@ for(type *name = (type*)iter.next(&(iter)),**_once=&name; _once; _once=NULL)
     __attribute__((destructor))
     void h_debug_end_warnings() {
 #ifdef H_ALLOCATORS
-        if (_debug_arena_registry.size > 0) {
-            for (int ai=0;ai<_debug_arena_registry.size;++ai) {
-                h_arena_t *arena = H_ARRAY_GET(h_arena_t*, _debug_arena_registry, ai);
-                fprintf(stderr, "Arena '%s' with %zu bytes allocated has never been destroyed. Potential memory leak.\n", arena->debug_name, arena->cap);
+        if (_debug_linear_allocator_registry.size > 0) {
+            for (int ai=0;ai<_debug_linear_allocator_registry.size;++ai) {
+                h_linear_allocator_t *arena = H_ARRAY_GET(h_linear_allocator_t*, _debug_linear_allocator_registry, ai);
+                fprintf(stderr, "Linear allocator '%s' with %zu bytes allocated has never been destroyed. Potential memory leak.\n", arena->debug_name, arena->cap);
+            }
+        }
+        if (_debug_arena_allocator_registry.size > 0) {
+            for (int ai=0;ai<_debug_arena_allocator_registry.size;++ai) {
+                h_arena_t *arena = H_ARRAY_GET(h_arena_t*, _debug_arena_allocator_registry, ai);
+                fprintf(stderr, "Arena '%s' has never been destroyed. Potential memory leak.\n", arena->debug_name );
             }
         }
 #endif
