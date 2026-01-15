@@ -8,6 +8,7 @@
  *  H_ALL
  *
  *  H_TYPES
+ *  H_DELEGATES
  *  H_ALLOCATORS
  *  H_COLLECTIONS
  *  H_HASH
@@ -25,16 +26,16 @@
 #define HCLIB_HCLIB_H
 
 #include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#define H_ASSERT(_e, ...) if(!(_e)) {fprintf(stderr, __VA_ARGS__); exit(1);}
 
 #ifdef H_ALL
 #define H_TYPES
+#define H_DELEGATES
 #define H_ALLOCATORS
 #define H_COLLECTIONS
 #define H_HASH
@@ -67,15 +68,21 @@ extern "C" {
 //  DECLARATIONS
 //
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #ifdef H_TYPES
-    typedef char i8_t;
-    typedef short i16_t;
-    typedef int i32_t;
-    typedef long long i64_t;
-    typedef unsigned char u8_t;
-    typedef unsigned short u16_t;
-    typedef unsigned int u32_t;
-    typedef unsigned long long u64_t;
+    typedef float       f32;
+    typedef double      f64;
+    typedef int8_t      i8;
+    typedef int16_t     i16;
+    typedef int32_t     i32;
+    typedef int64_t     i64;
+    typedef uint8_t     u8;
+    typedef uint16_t    u16;
+    typedef uint32_t    u32;
+    typedef uint64_t    u64;
 #endif
 
 #ifdef H_ALLOCATORS
@@ -92,6 +99,7 @@ typedef struct h_linear_allocator_t {
 
 h_linear_allocator_t *h_linear_allocator_create(size_t cap, char const* debug_name);
 void h_linear_allocator_destroy(h_linear_allocator_t const *allocator);
+void h_linear_allocator_reset(h_linear_allocator_t *allocator);
 void *h_linear_alloc(h_linear_allocator_t *allocator, size_t size);
 
 typedef struct h_arena_t {
@@ -162,17 +170,13 @@ void h_queue_free(h_queue_t *queue);
 
 #ifdef H_HASH
 
-    typedef u32_t (h_hash_fn_t)(u32_t);
+    typedef u32 (h_hash_fn_t)(u32);
 
-    u32_t h_pcg_hash(u32_t seed);
+    u32 h_pcg_hash(u32 seed);
 
-    u32_t h_hash(h_hash_fn_t *hash_fn, void *val, size_t size);
+    u32 h_hash(h_hash_fn_t *hash_fn, void *val, size_t size);
 
 #ifdef H_COLLECTIONS
-
-#ifndef H_HASHMAP_SLATE_FACTOR
-#define H_HASHMAP_SLATE_FACTOR 1.5
-#endif
 
     typedef bool (h_kcompare_fn_t)(void*,void*);
 
@@ -231,11 +235,11 @@ void h_queue_free(h_queue_t *queue);
 
 #ifdef H_RANDOM
 
-    float h_randf(u32_t seed);
+    float h_randf(u32 seed);
 
-    float h_randf_range(u32_t seed, float min, float max);
+    float h_randf_range(u32 seed, float min, float max);
 
-    i32_t h_randi(u32_t seed, i32_t min, i32_t max);
+    i32 h_randi(u32 seed, i32 min, i32 max);
 
 #endif
 
@@ -273,7 +277,7 @@ size_t : h_arena_string_alloc_size\
 
     // Dynamic Bitset
 
-    typedef u64_t h_bitset_word_t;
+    typedef u64 h_bitset_word_t;
 
     typedef struct h_bitset_t {
         size_t size;
@@ -335,6 +339,10 @@ for(type *name = (type*)iter.next(&(iter)),**_once=&name; _once; _once=NULL)
 
 #endif
 
+#ifdef H_DELEGATES
+
+#endif
+
 #ifdef H_DEFINITIONS
 
 #ifdef H_ALLOCATORS
@@ -384,6 +392,12 @@ for(type *name = (type*)iter.next(&(iter)),**_once=&name; _once; _once=NULL)
 #endif
         free(allocator->data);
         free(allocator);
+    }
+    void h_linear_allocator_reset(h_linear_allocator_t *allocator) {
+#ifdef H_DEBUG
+        printf("Reseting linear allocator '%s' with %zu bytes allocated\n", allocator->debug_name ,allocator->cap);
+#endif
+        allocator->size = 0;
     }
     void *h_linear_alloc(h_linear_allocator_t *allocator, size_t size) {
         if (allocator->size + size > allocator->cap) {
@@ -577,14 +591,14 @@ for(type *name = (type*)iter.next(&(iter)),**_once=&name; _once; _once=NULL)
 #endif
 
 #ifdef H_HASH
-    u32_t h_pcg_hash(u32_t seed) {
-        u32_t state = seed * 747796405u + 2891336453u;
-        u32_t word = (state >> ((state >> 28) + 4)) * 277803737u;
+    u32 h_pcg_hash(u32 seed) {
+        u32 state = seed * 747796405u + 2891336453u;
+        u32 word = (state >> ((state >> 28) + 4)) * 277803737u;
         return (word >> 22u) ^ word;
     }
 
-    u32_t h_hash(h_hash_fn_t *hash_fn, void *val, size_t size) {
-        u32_t h = 0x811c9dc5u;
+    u32 h_hash(h_hash_fn_t *hash_fn, void *val, size_t size) {
+        u32 h = 0x811c9dc5u;
         for (size_t i=0;i<size;++i) {
             h ^= *((char*)val + i);
             h = hash_fn(h);
@@ -606,7 +620,7 @@ for(type *name = (type*)iter.next(&(iter)),**_once=&name; _once; _once=NULL)
     }
 
     void *h_hashmap_put(h_hashmap_t *hashmap, void* key, void* val) {
-        u32_t idx = h_hash(hashmap->hash_fn, key, hashmap->keytype.keysize)%hashmap->capacity;
+        u32 idx = h_hash(hashmap->hash_fn, key, hashmap->keytype.keysize)%hashmap->capacity;
 
         h_kvpair_t pair = (h_kvpair_t){
             hashmap->keytype,
@@ -634,14 +648,14 @@ for(type *name = (type*)iter.next(&(iter)),**_once=&name; _once; _once=NULL)
     }
 
     void *h_hashmap_get(h_hashmap_t *hashmap, void* key) {
-        u32_t idx = h_hash(hashmap->hash_fn, key, hashmap->keytype.keysize)%hashmap->capacity;
+        u32 idx = h_hash(hashmap->hash_fn, key, hashmap->keytype.keysize)%hashmap->capacity;
 
         h_kvpair_t *pair = &hashmap->buckets[idx];
         while (pair && pair->key &&!hashmap->kcompare_fn(key, pair->key)) pair = pair->next;
         return pair ? pair->val : NULL;
     }
     void h_hashmap_remove(h_hashmap_t *hashmap, void* key) {
-        u32_t idx = h_hash(hashmap->hash_fn, key, hashmap->keytype.keysize)%hashmap->capacity;
+        u32 idx = h_hash(hashmap->hash_fn, key, hashmap->keytype.keysize)%hashmap->capacity;
 
         h_kvpair_t *pair = &hashmap->buckets[idx];
 
@@ -672,17 +686,17 @@ for(type *name = (type*)iter.next(&(iter)),**_once=&name; _once; _once=NULL)
 
 #ifdef H_RANDOM
 
-    float h_randf(u32_t seed) {
+    float h_randf(u32 seed) {
         seed = h_pcg_hash(seed);
         return (float)seed / (float)(1u << 31);
     }
 
-    float h_randf_range(u32_t seed, float min, float max) {
+    float h_randf_range(u32 seed, float min, float max) {
         return min + (max - min) * h_randf(seed);
     }
 
-    i32_t h_randi(u32_t seed, i32_t min, i32_t max) {
-        return min + (i32_t)(h_randf(seed) * (max - min + 1));
+    i32 h_randi(u32 seed, i32 min, i32 max) {
+        return min + (i32)(h_randf(seed) * (max - min + 1));
     }
 #endif
 
@@ -758,12 +772,12 @@ for(type *name = (type*)iter.next(&(iter)),**_once=&name; _once; _once=NULL)
     void *h_bitset_next(h_iter_t *iter) {
         void *val = iter->state;
         if (iter->hasnext(iter))
-            iter->state+=sizeof(u64_t);
+            iter->state+=sizeof(u64);
         return val;
     }
     bool h_bitset_hasnext(h_iter_t *iter) {
         h_bitset_t *bitset = (h_bitset_t*)iter->collection;
-        return iter->state < bitset->words+bitset->size*sizeof(u64_t);
+        return iter->state < bitset->words+bitset->size*sizeof(u64);
     }
 #endif
 
