@@ -16,6 +16,7 @@
  *  H_STRING
  *  H_ITER
  *  H_BITSET
+ *  H_SMARTPTR
  *
  *  Parameters :
  *
@@ -33,6 +34,12 @@
 
 #define H_ASSERT(_e, ...) if(!(_e)) {fprintf(stderr, __VA_ARGS__); exit(1);}
 
+#define H_CASSERT(predicate, file) _impl_H_CASSERT_LINE(predicate,__LINE__,file)
+
+#define _impl_H_PASTE(a,b) a##b
+#define _impl_H_CASSERT_LINE(predicate, line, file) \
+typedef char _impl_H_PASTE(assertion_failed_##file##_,line)[2*!!(predicate)-1];
+
 #ifdef H_ALL
 #define H_TYPES
 #define H_DELEGATES
@@ -43,6 +50,7 @@
 #define H_STRING
 #define H_ITER
 #define H_BITSET
+#define H_SMARTPTR
 #endif
 
 //
@@ -340,6 +348,17 @@ for(type *name = (type*)iter.next(&(iter)),**_once=&name; _once; _once=NULL)
 #endif
 
 #ifdef H_DELEGATES
+
+#endif
+
+#ifdef H_SMARTPTR
+
+#ifdef __GNUC__
+__attribute__((always_inline)) inline void h_smart_free(void *ptr);
+#define H_SMART __attribute__((cleanup(h_smart_free)))
+#else
+#define H_SMART printf("HClib's H_SMART module requires GNUC 'cleanup' extension. At line : %d", __LINE__);
+#endif
 
 #endif
 
@@ -902,6 +921,23 @@ for(type *name = (type*)iter.next(&(iter)),**_once=&name; _once; _once=NULL)
         }
     }
 
+#endif
+
+#ifdef H_SMARTPTR
+#ifdef __GNUC__
+    __attribute__((always_inline)) inline void h_smart_free(void *ptr) {
+        union {
+            void *ptr;
+            void **ptr_ptr;
+        } ptr_union;
+        ptr_union.ptr = ptr;
+        free(*ptr_union.ptr_ptr);
+#ifdef H_DEBUG
+        printf("Freed smart pointer 0x%p", *ptr_union.ptr_ptr);
+#endif
+        *ptr_union.ptr_ptr = NULL;
+    }
+#endif
 #endif
 
 #ifdef H_DEBUG
